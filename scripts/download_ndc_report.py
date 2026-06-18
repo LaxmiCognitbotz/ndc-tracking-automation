@@ -4,11 +4,42 @@ Oracle Fusion - NDC Process Request Status Report Downloader
 
 import asyncio
 import os
-
-from pathlib import Path
+import sys
 from datetime import datetime
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from pathlib import Path
+
 from dotenv import load_dotenv
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+
+# Redirect stdout and stderr to a log file
+LOG_DIR = Path(__file__).parent.parent / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / "download_ndc_report.log"
+
+class LoggerWriter:
+    def __init__(self, file_path):
+        self.terminal = sys.stdout
+        self.file_path = file_path
+        self.new_line = True
+
+    def write(self, message):
+        self.terminal.write(message)
+        try:
+            with open(self.file_path, "a", encoding="utf-8") as f:
+                for line in message.splitlines(keepends=True):
+                    if self.new_line and line.strip():
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S ")
+                        f.write(timestamp)
+                    f.write(line)
+                    self.new_line = line.endswith("\n")
+        except Exception:
+            pass
+
+    def flush(self):
+        self.terminal.flush()
+
+sys.stdout = LoggerWriter(LOG_FILE)
+sys.stderr = LoggerWriter(LOG_FILE)
 
 load_dotenv(verbose=True)
 
@@ -18,10 +49,10 @@ ORACLE_EMAIL = os.getenv("ORACLE_EMAIL")
 ORACLE_PASSWORD = os.getenv("ORACLE_PASSWORD")
 
 # Output directory
-DOWNLOAD_DIR = Path(__file__).parent / "NDC_Reports"
+DOWNLOAD_DIR = Path(__file__).parent.parent / "NDC_Reports"
 
 # Standalone automation profile (persists Oracle session between headless runs)
-AUTOMATION_PROFILE_DIR = Path(__file__).parent / "chrome_automation_profile"
+AUTOMATION_PROFILE_DIR = Path(__file__).parent.parent / "chrome_automation_profile"
 
 # Headless mode
 HEADLESS = os.getenv("HEADLESS", "true").lower()
