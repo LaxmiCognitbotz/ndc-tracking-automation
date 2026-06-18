@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment Variable
+.env
+
+# IDE configs
+.vscode
+
+# Folders
+chrome_automation_profile/
+backup_code/
+NDC_Reports/
