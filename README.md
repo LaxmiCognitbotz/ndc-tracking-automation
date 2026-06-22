@@ -12,6 +12,9 @@ It utilizes **Playwright** in Python to handle the navigation, automate Microsof
 - **MFA/RSA Push Handling**: Detects MFA requests and prompts the user to approve the push notification on their phone.
 - **Session Persistence**: Saves the browser session state in `chrome_automation_profile/` so that subsequent runs do not require logging in or completing MFA again until the session expires.
 - **Dynamic UI Navigation**: Handles Oracle Fusion springboard, handles nested BI Publisher iFrames, searches and assigns Business Units (e.g., `Adani Green`), and triggers automated Excel downloads.
+- **Local Excel Post-Filtering**: Automatically filters downloaded Oracle Excel sheets to keep only rows starting with "Adani Green" if the report was downloaded with "All" Business Units.
+- **F&F Exit Document Extraction**: Automates searching and downloading F&F PDF exit documents from OpenText Content Server, skipping irrelevant directories.
+- **Dedicated SharePoint Syncing**: Uploads the latest NDC Excel files to SharePoint (keeping only the latest file) and recursively uploads F&F PDFs to their respective employee folders.
 - **Smart Retries & Error Handling**: Implements retry logic for SSO pages and automatically clears Chrome lock files before starting.
 
 ---
@@ -22,11 +25,14 @@ It utilizes **Playwright** in Python to handle the navigation, automate Microsof
 NDC-Tracking-Automation/
 ├── scripts/
 │   ├── download_ndc_report.py       ← Downloads report from Oracle Fusion
-│   └── upload_to_sharepoint.py      ← Uploads report to SharePoint
+│   ├── download_f&f_report.py       ← Downloads F&F exit documents (interactive/on-demand)
+│   └── upload_to_sharepoint.py      ← Uploads Excel and F&F documents to SharePoint
 ├── scheduler/
-│   ├── run_pipeline.py              ← Orchestrator: runs download → upload in sequence
+│   ├── run_pipeline.py              ← Orchestrator: runs daily NDC download → upload
 │   └── setup_scheduler.ps1          ← ONE-TIME setup: registers 4 daily scheduled tasks
-├── NDC_Reports/                     ← Downloaded Excel reports saved here
+├── uploads/                         ← Downloaded files saved here
+│   ├── NDC_Reports/                 ← Downloaded NDC Excel sheets
+│   └── FF_Reports/                  ← F&F PDF documents in employee ID subfolders
 ├── logs/                            ← All runtime logs saved here
 │   ├── pipeline.log
 │   ├── download_ndc_report.log
@@ -56,13 +62,13 @@ copy .env.sample .env
 ```
 Open `.env` and fill in your details:
 - **Oracle Fusion configuration**:
-  - `ORACLE_URL`: The Oracle Fusion URL (e.g., `https://eibd.fa.em2.oraclecloud.com/fscmUI/faces/FuseWelcome`).
+  - `ORACLE_URL`: The Oracle Fusion URL.
   - `ORACLE_EMAIL`: Your corporate login email.
   - `ORACLE_PASSWORD`: Your corporate login password.
   - `HEADLESS`: Set to `true` for background runs or `false` to watch the browser in action.
 - **SharePoint configuration**:
-  - `SHAREPOINT_TENANT_ID`: The SharePoint Tenant ID (e.g., `04c72f56-1848-46a2-8167-8e5d36510cbc`).
-  - `SHAREPOINT_SITE_URL`: The SharePoint site URL (e.g., `https://adaniltd.sharepoint.com/sites/AGEL-Automation`).
+  - `SHAREPOINT_TENANT_ID`: The SharePoint Tenant ID.
+  - `SHAREPOINT_SITE_URL`: The SharePoint site URL.
   - `SHAREPOINT_CLIENT_ID`: App Registration Client ID with API access.
   - `SHAREPOINT_CLIENT_SECRET`: App Registration Client Secret.
   - `SHAREPOINT_TARGET_FOLDER`: Server relative folder path (e.g., `/sites/AGEL-Automation/Shared Documents/AI_AGEL/001_AI_Project/AI05_NDC_Tracker`).
@@ -103,15 +109,24 @@ uv run scripts/download_ndc_report.py
 > [!NOTE]
 > If a login session expires and MFA is triggered, the script will wait up to **5 minutes** for you to approve the push notification on your mobile device. Once approved, it will automatically continue.
 
-### 2. Upload to SharePoint
-Run the upload script to upload the report to SharePoint:
+### 2. Run F&F Exit Documents Downloader
+Run the F&F Exit Document Downloader manually by providing a list of employee IDs:
 
 ```powershell
-# Automatically search for and upload the latest report in the NDC_Reports/ directory
-uv run scripts/upload_to_sharepoint.py
+uv run scripts/download_f&f_report.py
+```
+- The script will ask you to enter employee IDs (comma-separated or one-by-one).
+- It will automatically search OpenText Content Server, skip irrelevant folders (e.g., `ServiceNow Request`), and download all F&F PDF documents into `uploads/FF_Reports/<Employee_ID>/`.
 
-# Or specify a specific file path to upload
-uv run scripts/upload_to_sharepoint.py --file "./NDC_Reports/your_report_name.xls"
+### 3. Upload to SharePoint
+Upload the downloaded reports to SharePoint. You can run individual uploads for NDC reports or F&F documents:
+
+```powershell
+# Upload only the latest NDC report (cleans up older reports in SharePoint automatically)
+uv run scripts/upload_to_sharepoint.py --type ndc
+
+# Upload all downloaded F&F exit documents recursively under their employee ID folders
+uv run scripts/upload_to_sharepoint.py --type ff
 ```
 
 ---
@@ -265,8 +280,9 @@ graph TD
     M --> N[Search & Add Business Unit 'Adani Green']
     N --> O[Click Apply]
     O --> P[Capture Download Event]
-    P --> Q[Save timestamped .xls to NDC_Reports/]
-    Q --> R[Done]
+    P --> Q[Save timestamped .xls to uploads/NDC_Reports/]
+    Q --> R[Post-Filter Excel locally if BU is 'All']
+    R --> S[Done]
 ```
 
 1. **Clean Profile Locks**: The script cleans any leftover Chrome lock files (e.g. `SingletonLock`) to prevent browser launch issues.
@@ -274,7 +290,7 @@ graph TD
 3. **Microsoft SSO & RSA MFA**: Automates credential input and handles MFA push verification. If the login session is rejected/retried, it clicks "Retry" up to 3 times.
 4. **Oracle Navigation**: Opens the report portal and handles nested iframe elements.
 5. **Business Unit Selection**: Automates the modal search dialog to search for `"Adani Green"`, moves all matching search results to the selected panel, and submits the parameter dialog.
-6. **Download**: Triggers and saves the report to the `NDC_Reports/` folder, naming it with a timestamp (e.g., `NDC_Process_Request_Status_18_June_2026_11.30AM.xls`).
+6. **Download & Post-Filter**: Triggers and saves the report to the `uploads/NDC_Reports/` folder, naming it with a timestamp. If Oracle fails to restrict the Business Unit to "Adani Green" (returning "All" instead), a local post-filter automatically runs to clean the sheet and keep only the Adani Green rows.
 
 ---
 

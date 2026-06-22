@@ -40,14 +40,18 @@ def log(msg: str):
         f.write(line + "\n")
 
 
-def run_script(script_path: Path) -> int:
+def run_script(script_path: Path, args: list = None) -> int:
     """Run a Python script as a subprocess and stream its output to the log."""
     log(f">>> Starting : {script_path.name}")
     log(f"    Full path: {script_path}")
 
+    cmd = [str(PYTHON), str(script_path)]
+    if args:
+        cmd.extend(args)
+
     try:
         result = subprocess.run(
-            [str(PYTHON), str(script_path)],
+            cmd,
             cwd=str(ROOT_DIR),
             capture_output=True,
             text=True,
@@ -95,7 +99,8 @@ def main():
         log("          Upload will still attempt in case a previous report exists.")
 
     # ── Step 2: Upload latest report to SharePoint ────────────────────────────
-    exit_ul = run_script(SCRIPTS / "upload_to_sharepoint.py")
+    # Limit scheduler run to only upload NDC reports, avoiding F&F files
+    exit_ul = run_script(SCRIPTS / "upload_to_sharepoint.py", ["--type", "ndc"])
 
     if exit_ul != 0:
         log(f"[ERROR] Upload failed with exit code {exit_ul}.")

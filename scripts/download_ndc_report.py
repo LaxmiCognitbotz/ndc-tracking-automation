@@ -10,6 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+import pandas as pd
 
 # Redirect stdout and stderr to a log file
 LOG_DIR = Path(__file__).parent.parent / "logs"
@@ -49,7 +50,7 @@ ORACLE_EMAIL = os.getenv("ORACLE_EMAIL")
 ORACLE_PASSWORD = os.getenv("ORACLE_PASSWORD")
 
 # Output directory
-DOWNLOAD_DIR = Path(__file__).parent.parent / "NDC_Reports"
+DOWNLOAD_DIR = Path(__file__).parent.parent / "uploads" / "NDC_Reports"
 
 # Standalone automation profile (persists Oracle session between headless runs)
 AUTOMATION_PROFILE_DIR = Path(__file__).parent.parent / "chrome_automation_profile"
@@ -534,6 +535,184 @@ async def click_apply_and_wait_for_download(
         return None
 
 
+def filter_downloaded_report(file_path: Path):
+    """
+    If the downloaded report's Business Unit metadata contains 'All',
+    filter the data rows to only keep Business Units starting with 'Adani Green'.
+    """
+    print(f"[{ts()}] Checking if Excel report requires post-download filtering...")
+    
+    # Try reading the file. Since Oracle BIP exports can be HTML-based,
+    # we support both binary/XML Excel and HTML tables.
+    dfs = []
+    file_type = "excel"
+    
+    try:
+        # Check if the file is HTML-based
+        is_html = False
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            head = f.read(1000)
+            if "<html" in head.lower() or "<table" in head.lower():
+                is_html = True
+                
+        if is_html:
+            dfs = pd.read_html(str(file_path))
+            file_type = "html"
+        else:
+            df = pd.read_excel(file_path, header=None)
+            dfs = [df]
+            file_type = "excel"
+            
+    except Exception as e:
+        print(f"[{ts()}]   Error: Could not parse Excel file {file_path.name}: {e}")
+        return
+
+    # Search for the Business Unit metadata row and table index
+    bu_meta_tbl_idx = None
+    bu_meta_row = None
+    bu_meta_col = None
+    bu_meta_val = None
+    
+    for idx, df in enumerate(dfs):
+        for r_idx in range(min(30, len(df))):
+            row_vals = [str(x).strip() for x in df.iloc[r_idx].tolist()]
+            # Also check column names as fallback
+            col_names = [str(c).strip() for c in df.columns]
+            
+            # Check row values
+            for c_idx, val in enumerate(row_vals):
+                if "Business Unit" in val:
+                    # Find next non-empty cell in the row
+                    for next_col_idx, next_val in enumerate(row_vals[c_idx+1:], start=c_idx+1):
+                        if next_val and next_val != "nan":
+                            bu_meta_tbl_idx = idx
+                            bu_meta_row = r_idx
+                            bu_meta_col = next_col_idx
+                            bu_meta_val = next_val
+                            break
+                    if bu_meta_tbl_idx is not None:
+                        break
+            
+            if bu_meta_tbl_idx is not None:
+                break
+                
+            # Check column headers (sometimes parsed as headers)
+            for c_idx, val in enumerate(col_names):
+                if "Business Unit" in val:
+                    # The value might be in the first row of that column
+                    if len(df) > 0:
+                        bu_meta_tbl_idx = idx
+                        bu_meta_row = -1  # indicates header
+                        bu_meta_col = c_idx
+                        bu_meta_val = str(df.iloc[0, c_idx]).strip()
+                        break
+            
+            if bu_meta_tbl_idx is not None:
+                break
+
+    if bu_meta_tbl_idx is None:
+        print(f"[{ts()}]   Could not locate 'Business Unit' metadata cell in any table.")
+        return
+
+    print(f"[{ts()}]   Found 'Business Unit' metadata in Table {bu_meta_tbl_idx}: '{bu_meta_val}'")
+    
+    # Check if the value is "All" (case-insensitive)
+    is_all = False
+    if bu_meta_val:
+        cleaned_val = bu_meta_val.lower().replace(":", "").strip()
+        if cleaned_val == "all":
+            is_all = True
+
+    if not is_all:
+        print(f"[{ts()}]   Business Unit is already filtered ('{bu_meta_val}'). No local filtering needed.")
+        return
+
+    print(f"[{ts()}]   Business Unit is 'All'. Searching for employee data table...")
+
+    # Locate the table and column headers containing the actual employee records.
+    # We scan all tables for a row containing "Business Unit" and at least 4 filled columns.
+    data_tbl_idx = None
+    header_row_idx = None
+    bu_col_idx = None
+    
+    for idx, df in enumerate(dfs):
+        # We start from row 0 if it's a different table, or row 5 if it's the metadata table
+        start_row = 5 if idx == bu_meta_tbl_idx else 0
+        for r_idx in range(start_row, len(df)):
+            row_vals = [str(x).strip() for x in df.iloc[r_idx].tolist()]
+            if "Business Unit" in row_vals:
+                non_empty = sum(1 for x in row_vals if x and x != "nan")
+                if non_empty >= 4:
+                    data_tbl_idx = idx
+                    header_row_idx = r_idx
+                    bu_col_idx = row_vals.index("Business Unit")
+                    break
+        if data_tbl_idx is not None:
+            break
+
+    if data_tbl_idx is None:
+        print(f"[{ts()}]   Error: Could not locate table header row containing 'Business Unit' column.")
+        return
+
+    print(f"[{ts()}]   Located data table in Table {data_tbl_idx}, Row {header_row_idx}, Column {bu_col_idx}")
+
+    # Perform the filtering on the target table
+    target_df = dfs[data_tbl_idx]
+    metadata_df = target_df.iloc[:header_row_idx].copy()
+    header_row = target_df.iloc[header_row_idx].copy()
+    data_df = target_df.iloc[header_row_idx + 1:].copy()
+
+    original_row_count = len(data_df)
+    
+    def should_keep(row):
+        val = str(row.iloc[bu_col_idx]).strip()
+        if not val or val == "nan":
+            return True
+        return val.lower().startswith("adani green")
+
+    filtered_data_df = data_df[data_df.apply(should_keep, axis=1)]
+    filtered_row_count = len(filtered_data_df)
+    removed_count = original_row_count - filtered_row_count
+
+    print(f"[{ts()}]   Filtered rows: kept {filtered_row_count}/{original_row_count} (removed {removed_count} non-Adani Green rows).")
+
+    # Update metadata Business Unit cell value to reflect the filter
+    new_meta_val = ":[Adani Green > Renewable > Hydro O&M,Adani Green > Renewable > Hydro Projects,Adani Green > Renewable > Solar O&M,Adani Green > Renewable > Solar Projects,Adani Green > Renewable > Wind O&M,Adani Green > Renewable > Wind Projects] (Filtered)"
+    
+    meta_df = dfs[bu_meta_tbl_idx]
+    if bu_meta_row == -1:
+        # It was in headers, update column name
+        new_cols = list(meta_df.columns)
+        new_cols[bu_meta_col] = "Business Unit " + new_meta_val
+        meta_df.columns = new_cols
+    else:
+        meta_df.iloc[bu_meta_row, bu_meta_col] = new_meta_val
+
+    # Reconstruct and save the Excel sheet
+    try:
+        # If there's only 1 table, combine and save
+        if len(dfs) == 1:
+            final_df = pd.concat([metadata_df, pd.DataFrame([header_row]), filtered_data_df], ignore_index=True)
+            if file_path.suffix.lower() == ".xls":
+                final_df.to_excel(file_path, header=False, index=False)
+            else:
+                final_df.to_excel(file_path, header=False, index=False, engine='openpyxl')
+        else:
+            # If multiple tables, we update target_df inside dfs
+            dfs[data_tbl_idx] = pd.concat([metadata_df, pd.DataFrame([header_row]), filtered_data_df], ignore_index=True)
+            # Write all tables to Excel sequentially in a single sheet
+            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                start_row = 0
+                for df_to_write in dfs:
+                    df_to_write.to_excel(writer, sheet_name="Sheet1", startrow=start_row, index=False, header=False)
+                    start_row += len(df_to_write) + 1  # 1 row space
+                    
+        print(f"[{ts()}] SUCCESS: Excel filter applied! Kept {filtered_row_count}/{original_row_count} rows starting with 'Adani Green'.")
+        
+    except Exception as e:
+        print(f"[{ts()}]   Error saving filtered Excel file: {e}")
+
+
 # ─── MAIN ────────────────────────────────────────────────────────────────────
 
 async def download_ndc_report():
@@ -636,7 +815,7 @@ async def download_ndc_report():
                 ),
                 "Search button",
             )
-            await report_page.wait_for_timeout(3000)
+            await report_page.wait_for_timeout(5000)
 
             print(f"[{ts()}] Moving all results to selected...")
             await safe_click(
@@ -645,7 +824,7 @@ async def download_ndc_report():
                 ),
                 "Move All button",
             )
-            await report_page.wait_for_timeout(1000)
+            await report_page.wait_for_timeout(2000)
 
             print(f"[{ts()}] Clicking OK...")
             ok_selectors = [
@@ -660,6 +839,7 @@ async def download_ndc_report():
             )
 
             if result:
+                filter_downloaded_report(Path(result))
                 print(f"\nSUCCESS! Report saved to:\n   {result}")
             else:
                 print(f"\nDownload did not complete in time. Check screenshot in {DOWNLOAD_DIR}")
