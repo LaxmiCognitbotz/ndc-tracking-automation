@@ -172,6 +172,19 @@ def upload_ndc_reports(ctx: ClientContext, target_base: str):
     cleanup_old_ndc_reports(latest_file)
 
     target_folder_url = f"{target_base}/NDC_Reports"
+    
+    # Ensure folder exists on SharePoint, then delete existing files inside it
+    ensure_folder_exists(ctx, target_folder_url)
+    try:
+        target_folder = ctx.web.get_folder_by_server_relative_url(target_folder_url)
+        files = target_folder.files.get().execute_query()
+        for f in files:
+            print(f"[SHAREPOINT CLEANUP] Deleting old report on SharePoint: {f.name}")
+            f.delete_object()
+        ctx.execute_query()
+    except Exception as e:
+        print(f"[SHAREPOINT CLEANUP] Warning: Could not clean up SharePoint folder: {e}")
+
     print(f"[UPLOAD] Latest NDC report is '{latest_file.name}'. Uploading to: {target_folder_url}")
     upload_file_to_sharepoint(ctx, latest_file, target_folder_url)
 

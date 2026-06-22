@@ -133,7 +133,7 @@ uv run scripts/upload_to_sharepoint.py --type ff
 
 ## Automated Scheduling
 
-The pipeline runs automatically at **9 AM, 12 PM, 3 PM, and 6 PM** every day.
+The pipeline runs automatically at **10 AM, 1 PM, 4 PM, and 7 PM** every day.
 If the PC was off or asleep at trigger time, it runs immediately on the next boot/wake.
 
 ---
@@ -169,10 +169,10 @@ schtasks /Query /FO TABLE | findstr "NDC_Pipeline"
 ✅ Expected output — all tasks must show `Ready`:
 ```
 TaskName           State
-NDC_Pipeline_0900  Ready
-NDC_Pipeline_1200  Ready
-NDC_Pipeline_1500  Ready
-NDC_Pipeline_1800  Ready
+NDC_Pipeline_1000  Ready
+NDC_Pipeline_1300  Ready
+NDC_Pipeline_1600  Ready
+NDC_Pipeline_1900  Ready
 ```
 
 ---
@@ -184,18 +184,18 @@ Tasks remain registered — just won't fire until re-enabled.
 
 **PowerShell:**
 ```powershell
-Disable-ScheduledTask -TaskName "NDC_Pipeline_0900"
-Disable-ScheduledTask -TaskName "NDC_Pipeline_1200"
-Disable-ScheduledTask -TaskName "NDC_Pipeline_1500"
-Disable-ScheduledTask -TaskName "NDC_Pipeline_1800"
+Disable-ScheduledTask -TaskName "NDC_Pipeline_1000"
+Disable-ScheduledTask -TaskName "NDC_Pipeline_1300"
+Disable-ScheduledTask -TaskName "NDC_Pipeline_1600"
+Disable-ScheduledTask -TaskName "NDC_Pipeline_1900"
 ```
 
 **CMD:**
 ```cmd
-schtasks /Change /TN "NDC_Pipeline_0900" /DISABLE
-schtasks /Change /TN "NDC_Pipeline_1200" /DISABLE
-schtasks /Change /TN "NDC_Pipeline_1500" /DISABLE
-schtasks /Change /TN "NDC_Pipeline_1800" /DISABLE
+schtasks /Change /TN "NDC_Pipeline_1000" /DISABLE
+schtasks /Change /TN "NDC_Pipeline_1300" /DISABLE
+schtasks /Change /TN "NDC_Pipeline_1600" /DISABLE
+schtasks /Change /TN "NDC_Pipeline_1900" /DISABLE
 ```
 
 ---
@@ -204,18 +204,18 @@ schtasks /Change /TN "NDC_Pipeline_1800" /DISABLE
 
 **PowerShell:**
 ```powershell
-Enable-ScheduledTask -TaskName "NDC_Pipeline_0900"
-Enable-ScheduledTask -TaskName "NDC_Pipeline_1200"
-Enable-ScheduledTask -TaskName "NDC_Pipeline_1500"
-Enable-ScheduledTask -TaskName "NDC_Pipeline_1800"
+Enable-ScheduledTask -TaskName "NDC_Pipeline_1000"
+Enable-ScheduledTask -TaskName "NDC_Pipeline_1300"
+Enable-ScheduledTask -TaskName "NDC_Pipeline_1600"
+Enable-ScheduledTask -TaskName "NDC_Pipeline_1900"
 ```
 
 **CMD:**
 ```cmd
-schtasks /Change /TN "NDC_Pipeline_0900" /ENABLE
-schtasks /Change /TN "NDC_Pipeline_1200" /ENABLE
-schtasks /Change /TN "NDC_Pipeline_1500" /ENABLE
-schtasks /Change /TN "NDC_Pipeline_1800" /ENABLE
+schtasks /Change /TN "NDC_Pipeline_1000" /ENABLE
+schtasks /Change /TN "NDC_Pipeline_1300" /ENABLE
+schtasks /Change /TN "NDC_Pipeline_1600" /ENABLE
+schtasks /Change /TN "NDC_Pipeline_1900" /ENABLE
 ```
 
 ---
@@ -227,10 +227,10 @@ You will need to run `setup_scheduler.ps1` again to restore them.
 
 **PowerShell or CMD:**
 ```cmd
-schtasks /Delete /TN "NDC_Pipeline_0900" /F
-schtasks /Delete /TN "NDC_Pipeline_1200" /F
-schtasks /Delete /TN "NDC_Pipeline_1500" /F
-schtasks /Delete /TN "NDC_Pipeline_1800" /F
+schtasks /Delete /TN "NDC_Pipeline_1000" /F
+schtasks /Delete /TN "NDC_Pipeline_1300" /F
+schtasks /Delete /TN "NDC_Pipeline_1600" /F
+schtasks /Delete /TN "NDC_Pipeline_1900" /F
 ```
 
 ---

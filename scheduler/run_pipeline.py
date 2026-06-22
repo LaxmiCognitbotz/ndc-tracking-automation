@@ -49,6 +49,11 @@ def run_script(script_path: Path, args: list = None) -> int:
     if args:
         cmd.extend(args)
 
+    # Windows-specific flag to hide console window
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = subprocess.CREATE_NO_WINDOW
+
     try:
         result = subprocess.run(
             cmd,
@@ -57,6 +62,7 @@ def run_script(script_path: Path, args: list = None) -> int:
             text=True,
             encoding="utf-8",
             errors="replace",
+            creationflags=creationflags,
         )
 
         if result.stdout.strip():

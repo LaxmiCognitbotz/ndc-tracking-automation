@@ -582,14 +582,23 @@ def filter_downloaded_report(file_path: Path):
             # Check row values
             for c_idx, val in enumerate(row_vals):
                 if "Business Unit" in val:
-                    # Find next non-empty cell in the row
-                    for next_col_idx, next_val in enumerate(row_vals[c_idx+1:], start=c_idx+1):
-                        if next_val and next_val != "nan":
-                            bu_meta_tbl_idx = idx
-                            bu_meta_row = r_idx
-                            bu_meta_col = next_col_idx
-                            bu_meta_val = next_val
-                            break
+                    # Check if the value is in the SAME cell (e.g. "Business Unit :All")
+                    # We can assume it's in the same cell if the cell contains ":" and has value after it.
+                    if ":" in val and len(val.split(":", 1)[1].strip()) > 0:
+                        bu_meta_tbl_idx = idx
+                        bu_meta_row = r_idx
+                        bu_meta_col = c_idx
+                        bu_meta_val = val.split(":", 1)[1].strip()
+                        break
+                    else:
+                        # Find next non-empty cell in the row
+                        for next_col_idx, next_val in enumerate(row_vals[c_idx+1:], start=c_idx+1):
+                            if next_val and next_val != "nan":
+                                bu_meta_tbl_idx = idx
+                                bu_meta_row = r_idx
+                                bu_meta_col = next_col_idx
+                                bu_meta_val = next_val
+                                break
                     if bu_meta_tbl_idx is not None:
                         break
             
@@ -599,13 +608,20 @@ def filter_downloaded_report(file_path: Path):
             # Check column headers (sometimes parsed as headers)
             for c_idx, val in enumerate(col_names):
                 if "Business Unit" in val:
-                    # The value might be in the first row of that column
-                    if len(df) > 0:
+                    if ":" in val and len(val.split(":", 1)[1].strip()) > 0:
                         bu_meta_tbl_idx = idx
                         bu_meta_row = -1  # indicates header
                         bu_meta_col = c_idx
-                        bu_meta_val = str(df.iloc[0, c_idx]).strip()
+                        bu_meta_val = val.split(":", 1)[1].strip()
                         break
+                    else:
+                        # The value might be in the first row of that column
+                        if len(df) > 0:
+                            bu_meta_tbl_idx = idx
+                            bu_meta_row = -1  # indicates header
+                            bu_meta_col = c_idx
+                            bu_meta_val = str(df.iloc[0, c_idx]).strip()
+                            break
             
             if bu_meta_tbl_idx is not None:
                 break
@@ -843,6 +859,9 @@ async def download_ndc_report():
                 print(f"\nSUCCESS! Report saved to:\n   {result}")
             else:
                 print(f"\nDownload did not complete in time. Check screenshot in {DOWNLOAD_DIR}")
+
+            # Explicitly close context to release any file locks
+            await context.close()
 
     except Exception as e:
         print(f"[{ts()}] Error: {e}")

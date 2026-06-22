@@ -10,7 +10,7 @@
 #  3. Run:
 #       powershell -ExecutionPolicy Bypass -File scheduler\setup_scheduler.ps1
 #  ─────────────────────────────────────────────────────────────────────────────
-#  After running, tasks fire silently at: 9AM | 12PM | 3PM | 6PM every day.
+#  After running, tasks fire silently at: 10AM | 1PM | 4PM | 7PM every day.
 #  If the PC was OFF/asleep at trigger time, task runs automatically on next boot.
 # =============================================================================
 
@@ -44,7 +44,7 @@ if (-not (Test-Path $PYTHONW)) {
 
 # ── Task configuration ────────────────────────────────────────────────────────
 $action = New-ScheduledTaskAction `
-    -Execute   "`"$PYTHONW`"" `
+    -Execute   $PYTHONW `
     -Argument  "`"$SCRIPT`"" `
     -WorkingDirectory $ROOT
 
@@ -57,10 +57,10 @@ $settings = New-ScheduledTaskSettingsSet `
     -DontStopIfGoingOnBatteries
 
 $tasks = @(
-    @{ Name = "NDC_Pipeline_0900"; Time = "09:00" },
-    @{ Name = "NDC_Pipeline_1200"; Time = "12:00" },
-    @{ Name = "NDC_Pipeline_1500"; Time = "15:00" },
-    @{ Name = "NDC_Pipeline_1800"; Time = "18:00" }
+    @{ Name = "NDC_Pipeline_1000"; Time = "10:00" },
+    @{ Name = "NDC_Pipeline_1300"; Time = "13:00" },
+    @{ Name = "NDC_Pipeline_1600"; Time = "16:00" },
+    @{ Name = "NDC_Pipeline_1900"; Time = "19:00" }
 )
 
 # ── Register tasks ────────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ if ($failed -eq 0) {
     Write-Host "============================================================" -ForegroundColor Green
     Write-Host "  SUCCESS! All tasks registered." -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Runs silently at: 9AM | 12PM | 3PM | 6PM" -ForegroundColor Green
+    Write-Host "  Runs silently at: 10AM | 1PM | 4PM | 7PM" -ForegroundColor Green
     Write-Host "  Missed triggers fire automatically on next boot/wake." -ForegroundColor Green
     Write-Host ""
     Write-Host "  Logs: $ROOT\logs\pipeline.log" -ForegroundColor Gray
