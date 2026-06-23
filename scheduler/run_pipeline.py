@@ -43,7 +43,6 @@ def log(msg: str):
 def run_script(script_path: Path, args: list = None) -> int:
     """Run a Python script as a subprocess and stream its output to the log."""
     log(f">>> Starting : {script_path.name}")
-    log(f"    Full path: {script_path}")
 
     cmd = [str(PYTHON), str(script_path)]
     if args:
@@ -87,10 +86,9 @@ def run_script(script_path: Path, args: list = None) -> int:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    log("=" * 70)
+    log("=" * 50)
     log("NDC PIPELINE STARTED")
-    log(f"Project root : {ROOT_DIR}")
-    log("=" * 70)
+    log("=" * 50)
 
     if not PYTHON.exists():
         log(f"[FATAL] Virtual-env Python not found: {PYTHON}")

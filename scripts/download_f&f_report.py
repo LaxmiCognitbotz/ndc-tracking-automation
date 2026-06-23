@@ -6,6 +6,7 @@ import asyncio
 import os
 import re
 import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -23,18 +24,12 @@ class LoggerWriter:
     def __init__(self, file_path):
         self.terminal = sys.stdout
         self.file_path = file_path
-        self.new_line = True
 
     def write(self, message):
         self.terminal.write(message)
         try:
             with open(self.file_path, "a", encoding="utf-8") as f:
-                for line in message.splitlines(keepends=True):
-                    if self.new_line and line.strip():
-                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S ")
-                        f.write(timestamp)
-                    f.write(line)
-                    self.new_line = line.endswith("\n")
+                f.write(message)
         except Exception:
             pass
 
@@ -76,7 +71,7 @@ SEARCH_RESULTS_WAIT = 10_000
 
 
 def ts():
-    return datetime.now().strftime("%H:%M:%S")
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _cleanup_profile_locks():
@@ -270,7 +265,6 @@ async def safe_click(locator, description: str, timeout: int = ELEMENT_TIMEOUT):
         await locator.wait_for(state="visible", timeout=timeout)
         await locator.scroll_into_view_if_needed()
         await locator.click(timeout=timeout)
-        print(f"[{ts()}]   Clicked: {description}")
     except PlaywrightTimeoutError:
         raise RuntimeError(f"Could not click '{description}' within {timeout}ms")
 
@@ -286,7 +280,6 @@ async def click_with_fallback(
             await loc.wait_for(state="visible", timeout=timeout_each)
             await loc.scroll_into_view_if_needed()
             await loc.click()
-            print(f"[{ts()}]   Clicked '{description}' via: {sel!r}")
             return
         except Exception as e:
             errors.append(f"    {sel!r}: {e}")
@@ -356,7 +349,7 @@ async def wait_for_content_server_home(page, timeout_s: int = 300):
         for sel in home_selectors:
             try:
                 if await page.locator(sel).first.is_visible(timeout=2000):
-                    print(f"[{ts()}]   Content Server home page ready (matched: {sel!r})")
+                    print(f"[{ts()}] Content Server home page ready")
                     return
             except Exception:
                 pass
@@ -415,7 +408,6 @@ async def search_employee(page, employee_number: str):
     await search_input.fill("")
     await page.wait_for_timeout(300)
     await search_input.fill(employee_number)
-    print(f"[{ts()}]   Entered search term: {employee_number}")
     await page.wait_for_timeout(500)
 
     # Step 4: Click the Search submit button
@@ -436,7 +428,6 @@ async def search_employee(page, employee_number: str):
         await page.locator("div.binf-list-group").first.wait_for(
             state="visible", timeout=SEARCH_RESULTS_WAIT
         )
-        print(f"[{ts()}]   Search results loaded")
     except PlaywrightTimeoutError:
         await save_debug_screenshot(page, f"no_results_{employee_number}")
         raise RuntimeError(
@@ -449,8 +440,6 @@ async def click_employee_master_folder(page, employee_number: str):
     Finds and clicks the employee's master folder in the search results.
     The folder's name should match the employee number exactly.
     """
-    print(f"[{ts()}] Locating master folder for employee: {employee_number}")
-
     # Define selectors for the search result title links
     selectors = [
         ".csui-search-item a",
@@ -470,7 +459,6 @@ async def click_employee_master_folder(page, employee_number: str):
                     cleaned_text = text.strip()
                     # Check for exact match of the employee number
                     if cleaned_text == employee_number:
-                        print(f"[{ts()}]   Found exact match for master folder: '{cleaned_text}' (selector: {sel!r})")
                         await loc.scroll_into_view_if_needed()
                         await loc.click()
                         await page.wait_for_timeout(3000)
@@ -485,7 +473,6 @@ async def click_employee_master_folder(page, employee_number: str):
         # Playwright exact text matching link
         loc = page.get_by_role("link", name=employee_number, exact=True).first
         if await loc.is_visible(timeout=5000):
-            print(f"[{ts()}]   Found master folder via get_by_role link.")
             await loc.click()
             await page.wait_for_timeout(3000)
             return
@@ -511,8 +498,6 @@ async def click_adani_exit_documents(page):
     Click the 'Adani Exit Documents' folder link inside the employee folder.
     This navigates into the subfolder containing the F&F documents.
     """
-    print(f"[{ts()}] Clicking 'Adani Exit Documents' folder...")
-
     # Wait for the table to render first
     try:
         await page.locator("td.csui-table-cell-name").first.wait_for(
@@ -552,7 +537,7 @@ async def get_document_count(page) -> int:
         # Count rows that have a name cell (actual document rows)
         rows = page.locator("tbody tr td.csui-table-cell-name")
         count = await rows.count()
-        print(f"[{ts()}]   Found {count} document(s) in folder")
+        print(f"[{ts()}] Found {count} document(s)")
         return count
     except PlaywrightTimeoutError:
         print(f"[{ts()}]   No document rows found in the folder")
@@ -677,7 +662,7 @@ async def download_document_at_row(
 
         await download.save_as(save_path)
         size = save_path.stat().st_size
-        print(f"[{ts()}]   Saved: {save_path.name} ({size:,} bytes)")
+        print(f"[{ts()}] Saved: {save_path.name} ({size:,} bytes)")
         return str(save_path)
 
     except PlaywrightTimeoutError:
@@ -691,7 +676,6 @@ async def download_document_at_row(
 
 async def navigate_home(page):
     """Click the Home icon to return to the Content Server home page."""
-    print(f"[{ts()}] Navigating back to Home...")
     await click_with_fallback(
         page,
         [
@@ -828,11 +812,7 @@ async def download_ff_reports(employee_numbers: List[str]):
         print(f"[{ts()}] No employee numbers provided. Exiting.")
         return
 
-    print(f"[{ts()}] ═══════════════════════════════════════════════════════════")
-    print(f"[{ts()}] F&F Document Downloader ({'headless' if HEADLESS == 'true' else 'visible'})")
-    print(f"[{ts()}] Employees to process: {len(employee_numbers)}")
-    print(f"[{ts()}] Output directory: {DOWNLOAD_DIR}")
-    print(f"[{ts()}] ═══════════════════════════════════════════════════════════")
+    print(f"[{ts()}] Starting F&F report download ({'headless' if HEADLESS == 'true' else 'visible'})")
 
     _cleanup_profile_locks()
 
@@ -840,7 +820,7 @@ async def download_ff_reports(employee_numbers: List[str]):
 
     try:
         async with async_playwright() as p:
-            print(f"[{ts()}] Starting dedicated automation browser...")
+            print(f"[{ts()}] Launching browser...")
             context = await p.chromium.launch_persistent_context(
                 user_data_dir=str(AUTOMATION_PROFILE_DIR),
                 channel="chrome",
@@ -855,7 +835,6 @@ async def download_ff_reports(employee_numbers: List[str]):
                     "--window-size=1517,900",
                 ],
             )
-            print(f"[{ts()}] Connected to automation Chrome.")
 
             page = context.pages[0] if context.pages else await context.new_page()
 
@@ -893,7 +872,7 @@ async def download_ff_reports(employee_numbers: List[str]):
             await context.close()
 
     except Exception as e:
-        print(f"[{ts()}] Fatal error: {e}")
+        print(f"[{ts()}] FATAL: {e}\n{traceback.format_exc()}")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print()

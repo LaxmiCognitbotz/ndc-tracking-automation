@@ -5,6 +5,7 @@ Oracle Fusion - NDC Process Request Status Report Downloader
 import asyncio
 import os
 import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -21,18 +22,12 @@ class LoggerWriter:
     def __init__(self, file_path):
         self.terminal = sys.stdout
         self.file_path = file_path
-        self.new_line = True
 
     def write(self, message):
         self.terminal.write(message)
         try:
             with open(self.file_path, "a", encoding="utf-8") as f:
-                for line in message.splitlines(keepends=True):
-                    if self.new_line and line.strip():
-                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S ")
-                        f.write(timestamp)
-                    f.write(line)
-                    self.new_line = line.endswith("\n")
+                f.write(message)
         except Exception:
             pass
 
@@ -62,7 +57,7 @@ HEADLESS = os.getenv("HEADLESS", "true").lower()
 BUSINESS_UNIT_SEARCH = "Adani Green"
 
 def ts():
-    return datetime.now().strftime("%H:%M:%S")
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def report_save_stem() -> str:
@@ -90,8 +85,11 @@ def _cleanup_profile_locks():
 
 async def save_debug_screenshot(page, label: str):
     path = DOWNLOAD_DIR / f"debug_{label}_{datetime.now().strftime('%H%M%S')}.png"
-    await page.screenshot(path=str(path), full_page=True)
-    print(f"[{ts()}]   Screenshot: {path}")
+    try:
+        await page.screenshot(path=str(path), full_page=True)
+        print(f"[{ts()}]   Screenshot: {path}")
+    except Exception as e:
+        print(f"[{ts()}]   Could not save screenshot: {e}")
     return str(path)
 
 
@@ -337,7 +335,6 @@ async def safe_click(locator, description: str, timeout: int = 15_000):
         await locator.wait_for(state="visible", timeout=timeout)
         await locator.scroll_into_view_if_needed()
         await locator.click(timeout=timeout)
-        print(f"[{ts()}]   Clicked: {description}")
     except PlaywrightTimeoutError:
         raise RuntimeError(f"Could not click '{description}' within {timeout}ms")
 
@@ -350,11 +347,9 @@ async def wait_for_loading(frame, timeout_ms: int = 90_000):
             return
         if not await mask.first.is_visible(timeout=2000):
             return
-        print(f"[{ts()}] Waiting for modal loading masks to disappear...")
         await mask.first.wait_for(state="hidden", timeout=timeout_ms)
-        print(f"[{ts()}]   Loading masks cleared.")
     except Exception as e:
-        print(f"[{ts()}]   (Debug) Loading mask wait skipped: {e}")
+        print(f"[{ts()}] Loading mask error: {traceback.format_exc()}")
 
 
 async def click_with_fallback(page_or_frame, selectors: list, description: str,
@@ -366,7 +361,6 @@ async def click_with_fallback(page_or_frame, selectors: list, description: str,
             await loc.wait_for(state="visible", timeout=timeout_each)
             await loc.scroll_into_view_if_needed()
             await loc.click()
-            print(f"[{ts()}]   Clicked '{description}' via: {sel!r}")
             return
         except Exception as e:
             errors.append(f"    {sel!r}: {e}")
@@ -403,8 +397,6 @@ async def wait_for_report_tab(context, timeout_s: int = 90):
 
         now = asyncio.get_event_loop().time()
         if now - last_print > 10:
-            urls = [p.url[:70] for p in context.pages]
-            print(f"[{ts()}]   (Debug) {len(urls)} open tabs: {urls}")
             last_print = now
 
         await asyncio.sleep(1.0)
@@ -421,7 +413,7 @@ async def get_bipublisher_frame(report_page, timeout_s: int = 90):
     Report parameters live inside the first child iframe of the main frame
     (matches Puppeteer recording: mainFrame().childFrames()[0]).
     """
-    print(f"[{ts()}] Waiting for report parameter iframe...")
+
     bu_input = '#xdo\\:xdo\\:_paramsP_Business_Unit_div_input'
     bu_input_loose = '[id*="Business_Unit_div_input"]'
     apply_btn = '#reportViewApply'
@@ -435,7 +427,7 @@ async def get_bipublisher_frame(report_page, timeout_s: int = 90):
             try:
                 loc = frame.locator(bu_input)
                 if await loc.count() > 0 and await loc.first.is_visible(timeout=2000):
-                    print(f"[{ts()}]   Parameter iframe found (main child frame [0]).")
+
                     return frame
             except Exception:
                 pass
@@ -445,7 +437,7 @@ async def get_bipublisher_frame(report_page, timeout_s: int = 90):
             try:
                 loc = frame.locator(bu_input_loose)
                 if await loc.count() > 0 and await loc.first.is_visible(timeout=1000):
-                    print(f"[{ts()}]   Parameter iframe found (frame scan).")
+
                     return frame
             except Exception:
                 pass
@@ -500,7 +492,7 @@ async def click_apply_and_wait_for_download(
     Apply triggers an automatic Excel download — no Export button needed.
     Wait for the download event and save with a timestamped filename.
     """
-    print(f"[{ts()}] Clicking Apply — automatic download will start...")
+    print(f"[{ts()}] Applying report & downloading...")
     try:
         async with report_page.expect_download(timeout=timeout_ms) as dl_info:
             await safe_click(report_frame.locator('#reportViewApply'), "Apply button")
@@ -524,10 +516,7 @@ async def click_apply_and_wait_for_download(
                 f"Downloaded file is too small ({size} bytes) — likely incomplete."
             )
 
-        print(f"[{ts()}]   Saved: {save_path}")
-        if suggested:
-            print(f"[{ts()}]   Browser filename: {suggested}")
-        print(f"[{ts()}]   File size: {size:,} bytes")
+        print(f"[{ts()}] Saved: {save_path.name} ({size:,} bytes)")
         return str(save_path)
 
     except PlaywrightTimeoutError:
@@ -630,8 +619,6 @@ def filter_downloaded_report(file_path: Path):
         print(f"[{ts()}]   Could not locate 'Business Unit' metadata cell in any table.")
         return
 
-    print(f"[{ts()}]   Found 'Business Unit' metadata in Table {bu_meta_tbl_idx}: '{bu_meta_val}'")
-    
     # Check if the value is "All" (case-insensitive)
     is_all = False
     if bu_meta_val:
@@ -642,8 +629,6 @@ def filter_downloaded_report(file_path: Path):
     if not is_all:
         print(f"[{ts()}]   Business Unit is already filtered ('{bu_meta_val}'). No local filtering needed.")
         return
-
-    print(f"[{ts()}]   Business Unit is 'All'. Searching for employee data table...")
 
     # Locate the table and column headers containing the actual employee records.
     # We scan all tables for a row containing "Business Unit" and at least 4 filled columns.
@@ -670,8 +655,6 @@ def filter_downloaded_report(file_path: Path):
         print(f"[{ts()}]   Error: Could not locate table header row containing 'Business Unit' column.")
         return
 
-    print(f"[{ts()}]   Located data table in Table {data_tbl_idx}, Row {header_row_idx}, Column {bu_col_idx}")
-
     # Perform the filtering on the target table
     target_df = dfs[data_tbl_idx]
     metadata_df = target_df.iloc[:header_row_idx].copy()
@@ -689,8 +672,6 @@ def filter_downloaded_report(file_path: Path):
     filtered_data_df = data_df[data_df.apply(should_keep, axis=1)]
     filtered_row_count = len(filtered_data_df)
     removed_count = original_row_count - filtered_row_count
-
-    print(f"[{ts()}]   Filtered rows: kept {filtered_row_count}/{original_row_count} (removed {removed_count} non-Adani Green rows).")
 
     # Update metadata Business Unit cell value to reflect the filter
     new_meta_val = ":[Adani Green > Renewable > Hydro O&M,Adani Green > Renewable > Hydro Projects,Adani Green > Renewable > Solar O&M,Adani Green > Renewable > Solar Projects,Adani Green > Renewable > Wind O&M,Adani Green > Renewable > Wind Projects] (Filtered)"
@@ -734,13 +715,13 @@ def filter_downloaded_report(file_path: Path):
 async def download_ndc_report():
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     print(f"[{ts()}] Starting NDC report download ({'headless' if HEADLESS == 'true' else 'visible'})")
-    print(f"[{ts()}] Output directory: {DOWNLOAD_DIR}")
+
 
     _cleanup_profile_locks()
 
     try:
         async with async_playwright() as p:
-            print(f"[{ts()}] Starting dedicated automation browser...")
+            print(f"[{ts()}] Launching browser...")
             context = await p.chromium.launch_persistent_context(
                 user_data_dir=str(AUTOMATION_PROFILE_DIR),
                 channel="chrome",
@@ -754,7 +735,7 @@ async def download_ndc_report():
                     "--window-size=1517,900",
                 ]
             )
-            print(f"[{ts()}] Connected to automation Chrome.")
+
 
             page = context.pages[0] if context.pages else await context.new_page()
 
@@ -765,7 +746,7 @@ async def download_ndc_report():
             await wait_for_oracle_home(page, timeout_s=120)
             await page.wait_for_timeout(2000)
 
-            print(f"[{ts()}] Clicking 'HR SPOC Reports'...")
+            print(f"[{ts()}] Opening NDC Process Request Status report...")
             await click_with_fallback(page, [
                 'a:has-text("HR SPOC Reports")',
                 'text="HR SPOC Reports"',
@@ -775,7 +756,6 @@ async def download_ndc_report():
             ], "HR SPOC Reports")
             await page.wait_for_timeout(3000)
 
-            print(f"[{ts()}] Clicking 'NDC Process Request Status' (expecting new tab)...")
             ndc_selectors = [
                 'a:has-text("NDC Process Request Status")',
                 'text="NDC Process Request Status"',
@@ -787,9 +767,7 @@ async def download_ndc_report():
                 async with context.expect_page(timeout=60_000) as new_page_info:
                     await click_with_fallback(page, ndc_selectors, "NDC Process Request Status")
                 report_page = await new_page_info.value
-                print(f"[{ts()}]   New report tab opened.")
             except PlaywrightTimeoutError:
-                print(f"[{ts()}]   No new tab event — looking for existing report tab...")
                 report_page = await wait_for_report_tab(context, timeout_s=30)
 
             await report_page.bring_to_front()
@@ -801,14 +779,41 @@ async def download_ndc_report():
 
             report_frame = await get_bipublisher_frame(report_page, timeout_s=90)
             await wait_for_loading(report_frame, timeout_ms=30_000)
+            print(f"[{ts()}] Report parameters loaded")
 
-            print(f"[{ts()}] Clicking Business Unit field...")
+            from_date_selectors = [
+                '#_paramsP_FROMDATE',
+                'xpath=//*[@id="_paramsP_FROMDATE"]',
+                'input[id="_paramsP_FROMDATE"]',
+            ]
+            from_date_filled = False
+            for sel in from_date_selectors:
+                try:
+                    loc = report_frame.locator(sel).first
+                    if await loc.is_visible(timeout=5000):
+                        await loc.click(click_count=3)
+                        await report_page.wait_for_timeout(500)
+                        await loc.fill("02-09-2026")
+                        await report_page.wait_for_timeout(500)
+                        await loc.click()
+                        await report_page.wait_for_timeout(1000)
+                        from_date_filled = True
+                        break
+                except Exception as e:
+                    print(f"[{ts()}] From Date selector failed: {traceback.format_exc()}")
+                    continue
+            if from_date_filled:
+                print(f"[{ts()}] From Date set: 02-09-2026")
+            else:
+                await save_debug_screenshot(report_page, "from_date_not_found")
+                print(f"[{ts()}] WARNING: Could not fill From Date field!")
+            await report_page.wait_for_timeout(2000)
+
+            print(f"[{ts()}] Selecting Business Unit: {BUSINESS_UNIT_SEARCH}...")
             await safe_click(
                 report_frame.locator('#xdo\\:xdo\\:_paramsP_Business_Unit_div_input'),
                 "Business Unit field",
             )
-
-            print(f"[{ts()}] Clicking Business Unit search icon (magnifier)...")
             await safe_click(
                 report_frame.locator(
                     '#xdo\\:xdo\\:_paramsP_Business_Unit_div_b span.dialogFloatLeft'
@@ -817,14 +822,12 @@ async def download_ndc_report():
             )
             await report_page.wait_for_timeout(2000)
 
-            print(f"[{ts()}] Filling '{BUSINESS_UNIT_SEARCH}'...")
             dialog_input = report_frame.locator(
                 '#xdo\\:xdo\\:_paramsP_Business_Unit_div_input_searchDialog_input'
             )
             await dialog_input.wait_for(state="visible", timeout=15_000)
             await dialog_input.fill(BUSINESS_UNIT_SEARCH)
 
-            print(f"[{ts()}] Clicking Search...")
             await safe_click(
                 report_frame.locator(
                     '#xdo\\:xdo\\:_paramsP_Business_Unit_div_input_searchDialog_button'
@@ -833,7 +836,6 @@ async def download_ndc_report():
             )
             await report_page.wait_for_timeout(5000)
 
-            print(f"[{ts()}] Moving all results to selected...")
             await safe_click(
                 report_frame.locator(
                     '#xdo\\:xdo\\:_paramsP_Business_Unit_div_input_searchDialog_moveAllImg'
@@ -842,7 +844,6 @@ async def download_ndc_report():
             )
             await report_page.wait_for_timeout(2000)
 
-            print(f"[{ts()}] Clicking OK...")
             ok_selectors = [
                 'xpath=//*[@id="xdo:xdo:_paramsP_Business_Unit_div_input_searchDialog_dialogTable"]/tbody/tr[3]/td[2]/table/tbody/tr/td[2]/button[1]',
                 'button.button_mo',
@@ -864,7 +865,7 @@ async def download_ndc_report():
             await context.close()
 
     except Exception as e:
-        print(f"[{ts()}] Error: {e}")
+        print(f"[{ts()}] FATAL: {e}\n{traceback.format_exc()}")
 
 
 if __name__ == "__main__":

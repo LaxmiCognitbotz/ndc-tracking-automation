@@ -23,18 +23,12 @@ class LoggerWriter:
     def __init__(self, file_path):
         self.terminal = sys.stdout
         self.file_path = file_path
-        self.new_line = True
 
     def write(self, message):
         self.terminal.write(message)
         try:
             with open(self.file_path, "a", encoding="utf-8") as f:
-                for line in message.splitlines(keepends=True):
-                    if self.new_line and line.strip():
-                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S ")
-                        f.write(timestamp)
-                    f.write(line)
-                    self.new_line = line.endswith("\n")
+                f.write(message)
         except Exception:
             pass
 
@@ -61,6 +55,9 @@ FF_REPORTS_DIR = UPLOADS_DIR / "FF_Reports"
 # Ensure local directories exist
 NDC_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 FF_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+def ts():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def connect_sharepoint():
@@ -104,12 +101,10 @@ def ensure_folder_exists(ctx: ClientContext, folder_relative_url: str):
             ctx.execute_query()
         except Exception:
             parent_path = current_path.rsplit("/", 1)[0]
-            print(f"[SHAREPOINT] Folder '{current_path}' not found, creating inside '{parent_path}'...")
             try:
                 parent_folder = ctx.web.get_folder_by_server_relative_url(parent_path)
                 parent_folder.folders.add(part)
                 ctx.execute_query()
-                print(f"[SHAREPOINT] Created folder: {part}")
             except Exception as ex:
                 raise RuntimeError(f"Failed to create folder '{part}' in '{parent_path}': {ex}")
 
@@ -132,17 +127,14 @@ def get_latest_report(directory: Path, pattern: str = "*.xls") -> Path:
 def upload_file_to_sharepoint(ctx: ClientContext, local_file_path: Path, target_folder_url: str):
     """Upload a local file to a target SharePoint folder."""
     file_name = local_file_path.name
-    print(f"[UPLOAD] Uploading {file_name} to {target_folder_url}...")
 
-    # Ensure the folder exists on SharePoint first
     ensure_folder_exists(ctx, target_folder_url)
 
-    # Get target folder and upload
     target_folder = ctx.web.get_folder_by_server_relative_url(target_folder_url)
     target_folder.files.upload(str(local_file_path))
     ctx.execute_query()
     
-    print(f"[SUCCESS] Upload completed: {file_name}")
+    print(f"[{ts()}] Uploaded: {file_name}")
 
 
 def cleanup_old_ndc_reports(latest_file: Path):
@@ -150,59 +142,52 @@ def cleanup_old_ndc_reports(latest_file: Path):
     try:
         for f in NDC_REPORTS_DIR.iterdir():
             if f.is_file() and f.resolve() != latest_file.resolve():
-                print(f"[CLEANUP] Deleting old local report: {f.name}")
                 f.unlink()
     except Exception as e:
-        print(f"[CLEANUP] Error cleaning up old reports: {e}")
+        print(f"[{ts()}] [CLEANUP] Error: {traceback.format_exc()}")
 
 
 def upload_ndc_reports(ctx: ClientContext, target_base: str):
-    """Upload only the latest Excel file from local uploads/NDC_Reports to SharePoint target/NDC_Reports, keeping only the latest file locally."""
-    print(f"\n[UPLOAD] Checking for NDC Reports in '{NDC_REPORTS_DIR}'...")
+    """Upload only the latest Excel file from local uploads/NDC_Reports to SharePoint."""
     if not NDC_REPORTS_DIR.exists():
         return
 
     try:
         latest_file = get_latest_report(NDC_REPORTS_DIR)
     except FileNotFoundError:
-        print("[UPLOAD] No NDC report files found to upload.")
+        print(f"[{ts()}] No NDC report files found.")
         return
 
-    # Delete all other files first (keep only the latest one)
     cleanup_old_ndc_reports(latest_file)
 
     target_folder_url = f"{target_base}/NDC_Reports"
     
-    # Ensure folder exists on SharePoint, then delete existing files inside it
     ensure_folder_exists(ctx, target_folder_url)
     try:
         target_folder = ctx.web.get_folder_by_server_relative_url(target_folder_url)
         files = target_folder.files.get().execute_query()
         for f in files:
-            print(f"[SHAREPOINT CLEANUP] Deleting old report on SharePoint: {f.name}")
             f.delete_object()
         ctx.execute_query()
     except Exception as e:
-        print(f"[SHAREPOINT CLEANUP] Warning: Could not clean up SharePoint folder: {e}")
+        print(f"[{ts()}] [CLEANUP] SharePoint cleanup error: {traceback.format_exc()}")
 
-    print(f"[UPLOAD] Latest NDC report is '{latest_file.name}'. Uploading to: {target_folder_url}")
+    print(f"[{ts()}] NDC report: {latest_file.name}")
     upload_file_to_sharepoint(ctx, latest_file, target_folder_url)
 
 
 def upload_ff_reports(ctx: ClientContext, target_base: str):
-    """Upload all F&F documents from local uploads/FF_Reports to SharePoint target/F&F_Documents."""
-    print(f"\n[UPLOAD] Checking for F&F Documents in '{FF_REPORTS_DIR}'...")
+    """Upload all F&F documents from local uploads/FF_Reports to SharePoint."""
     if not FF_REPORTS_DIR.exists():
         return
 
-    # Subdirectories are named after employee IDs
     subdirs = [d for d in FF_REPORTS_DIR.iterdir() if d.is_dir()]
     if not subdirs:
-        print("[UPLOAD] No F&F employee folders found to upload.")
+        print(f"[{ts()}] No F&F employee folders found.")
         return
 
     target_base_url = f"{target_base}/F&F_Documents"
-    print(f"[UPLOAD] Found {len(subdirs)} employee folder(s) to process.")
+    print(f"[{ts()}] F&F documents: {len(subdirs)} employee(s)")
     
     for subdir in subdirs:
         emp_id = subdir.name
@@ -211,9 +196,11 @@ def upload_ff_reports(ctx: ClientContext, target_base: str):
             continue
 
         emp_target_url = f"{target_base_url}/{emp_id}"
-        print(f"[UPLOAD] Uploading {len(files)} document(s) for employee {emp_id} to: {emp_target_url}")
         for f in files:
-            upload_file_to_sharepoint(ctx, f, emp_target_url)
+            try:
+                upload_file_to_sharepoint(ctx, f, emp_target_url)
+            except Exception as e:
+                print(f"[{ts()}] [ERROR] Failed to upload {f.name} for employee {emp_id}: {e}\n{traceback.format_exc()}")
 
 
 def main():
@@ -247,22 +234,27 @@ def main():
                 raise ValueError("SHAREPOINT_TARGET_FOLDER environment variable is not set.")
 
             if args.type in ["ndc", "all"]:
-                upload_ndc_reports(ctx, TARGET_FOLDER)
+                try:
+                    upload_ndc_reports(ctx, TARGET_FOLDER)
+                except Exception as e:
+                    print(f"[{ts()}] [ERROR] NDC reports upload failed: {e}\n{traceback.format_exc()}")
 
             if args.type in ["ff", "all"]:
-                upload_ff_reports(ctx, TARGET_FOLDER)
+                try:
+                    upload_ff_reports(ctx, TARGET_FOLDER)
+                except Exception as e:
+                    print(f"[{ts()}] [ERROR] F&F reports upload failed: {e}\n{traceback.format_exc()}")
 
     except ValueError as e:
-        print(f"\n[ERROR] Configuration Error: {e}")
+        print(f"\n[{ts()}] [ERROR] Configuration Error: {traceback.format_exc()}")
     except FileNotFoundError as e:
-        print(f"\n[ERROR] File Not Found: {e}")
+        print(f"\n[{ts()}] [ERROR] File Not Found: {traceback.format_exc()}")
     except PermissionError as e:
-        print(f"\n[ERROR] Local Permission Error: {e}")
+        print(f"\n[{ts()}] [ERROR] Local Permission Error: {traceback.format_exc()}")
     except ClientRequestException as e:
-        print(f"\n[ERROR] SharePoint API Error: {e.response.status_code} - {e.response.text}")
+        print(f"\n[{ts()}] [ERROR] SharePoint API Error: {e.response.status_code}\n{traceback.format_exc()}")
     except Exception as e:
-        print(f"\n[ERROR] Unexpected Error: {e}")
-        traceback.print_exc()
+        print(f"\n[{ts()}] [ERROR] Unexpected Error: {traceback.format_exc()}")
 
 
 if __name__ == "__main__":
