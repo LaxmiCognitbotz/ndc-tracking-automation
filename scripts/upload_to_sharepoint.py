@@ -140,11 +140,16 @@ def upload_file_to_sharepoint(ctx: ClientContext, local_file_path: Path, target_
 def cleanup_old_ndc_reports(latest_file: Path):
     """Delete all files in uploads/NDC_Reports except for the latest_file."""
     try:
+        latest_str = str(latest_file.resolve()).lower()
         for f in NDC_REPORTS_DIR.iterdir():
-            if f.is_file() and f.resolve() != latest_file.resolve():
-                f.unlink()
+            if f.is_file() and str(f.resolve()).lower() != latest_str:
+                try:
+                    f.unlink()
+                    print(f"[{ts()}] [CLEANUP] Deleted local file: {f.name}")
+                except Exception as e:
+                    print(f"[{ts()}] [CLEANUP] Warning: could not delete local file {f.name}: {e}")
     except Exception as e:
-        print(f"[{ts()}] [CLEANUP] Error: {traceback.format_exc()}")
+        print(f"[{ts()}] [CLEANUP] Local cleanup error: {traceback.format_exc()}")
 
 
 def upload_ndc_reports(ctx: ClientContext, target_base: str):
@@ -165,10 +170,21 @@ def upload_ndc_reports(ctx: ClientContext, target_base: str):
     ensure_folder_exists(ctx, target_folder_url)
     try:
         target_folder = ctx.web.get_folder_by_server_relative_url(target_folder_url)
-        files = target_folder.files.get().execute_query()
-        for f in files:
-            f.delete_object()
+        files = target_folder.files
+        ctx.load(files)
         ctx.execute_query()
+        
+        deleted_count = 0
+        for f in files:
+            try:
+                f.delete_object()
+                deleted_count += 1
+            except Exception as e:
+                print(f"[{ts()}] [CLEANUP] Could not delete SharePoint file: {e}")
+        
+        if deleted_count > 0:
+            ctx.execute_query()
+            print(f"[{ts()}] [CLEANUP] Deleted {deleted_count} old files from SharePoint.")
     except Exception as e:
         print(f"[{ts()}] [CLEANUP] SharePoint cleanup error: {traceback.format_exc()}")
 

@@ -139,46 +139,60 @@ async def _handle_microsoft_sso(page):
     await page.wait_for_timeout(2000)
     await check_for_sso_errors(page)
 
-    # ── Step 1: Email ─────────────────────────────────────────────────────
-    email_selectors = [
-        'input[name="loginfmt"]',
-        'input[type="email"]',
-        'input[id="i0116"]',
-    ]
+    # ── Detect Current SSO State ──────────────────────────────────────────
     email_filled = False
-    for sel in email_selectors:
-        try:
-            email_input = page.locator(sel).first
-            if await email_input.is_visible(timeout=5000):
-                for attempt in range(1, 4):
-                    await email_input.fill("")
-                    await page.wait_for_timeout(200)
-                    await email_input.fill(ORACLE_EMAIL)
-                    print(f"[{ts()}]   Entered email: {ORACLE_EMAIL} (Attempt {attempt}/3)")
-                    await page.wait_for_timeout(500)
+    try:
+        # Wait for either the email field or password field to appear
+        any_input = page.locator('input[name="loginfmt"], input[type="email"], input[name="passwd"], input[type="password"]')
+        await any_input.first.wait_for(state="visible", timeout=5000)
+        
+        # Check which one actually appeared
+        if await page.locator('input[name="passwd"], input[type="password"]').first.is_visible():
+            print(f"[{ts()}]   Password screen detected directly — skipping email entry.")
+            email_filled = True
+    except Exception:
+        pass
 
-                    # Click Next
-                    next_btn = page.locator('input[type="submit"], #idSIButton9').first
-                    await next_btn.click()
-                    print(f"[{ts()}]   Clicked Next")
-                    await page.wait_for_timeout(3000)
+    # ── Step 1: Email ─────────────────────────────────────────────────────
+    if not email_filled:
+        email_selectors = [
+            'input[name="loginfmt"]',
+            'input[type="email"]',
+            'input[id="i0116"]',
+        ]
+        for sel in email_selectors:
+            try:
+                email_input = page.locator(sel).first
+                if await email_input.is_visible(timeout=5000):
+                    for attempt in range(1, 4):
+                        await email_input.fill("")
+                        await page.wait_for_timeout(200)
+                        await email_input.fill(ORACLE_EMAIL)
+                        print(f"[{ts()}]   Entered email: {ORACLE_EMAIL} (Attempt {attempt}/3)")
+                        await page.wait_for_timeout(500)
+
+                        # Click Next
+                        next_btn = page.locator('input[type="submit"], #idSIButton9').first
+                        await next_btn.click()
+                        print(f"[{ts()}]   Clicked Next")
+                        await page.wait_for_timeout(3000)
+                        
+                        # Check for errors immediately after clicking Next
+                        try:
+                            await check_for_sso_errors(page)
+                            email_filled = True
+                            break  # No errors, proceed to next step
+                        except RuntimeError as e:
+                            if attempt == 3:
+                                raise
+                            print(f"[{ts()}]   {e} - Retrying...")
                     
-                    # Check for errors immediately after clicking Next
-                    try:
-                        await check_for_sso_errors(page)
-                        email_filled = True
-                        break  # No errors, proceed to next step
-                    except RuntimeError as e:
-                        if attempt == 3:
-                            raise
-                        print(f"[{ts()}]   {e} - Retrying...")
-                
-                if email_filled:
-                    break
-        except RuntimeError:
-            raise
-        except Exception:
-            continue
+                    if email_filled:
+                        break
+            except RuntimeError:
+                raise
+            except Exception:
+                continue
 
     if not email_filled:
         print(f"[{ts()}]   Email field not found — page may have changed.")
@@ -715,6 +729,18 @@ def filter_downloaded_report(file_path: Path):
 async def download_ndc_report():
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     print(f"[{ts()}] Starting NDC report download ({'headless' if HEADLESS == 'true' else 'visible'})")
+
+    # Clean up old files locally before downloading the new one
+    try:
+        for f in DOWNLOAD_DIR.iterdir():
+            if f.is_file():
+                try:
+                    f.unlink()
+                    print(f"[{ts()}] [CLEANUP] Deleted old local file: {f.name}")
+                except Exception as e:
+                    print(f"[{ts()}] [CLEANUP] Warning: could not delete {f.name}: {e}")
+    except Exception as e:
+        print(f"[{ts()}] [CLEANUP] Local cleanup error: {e}")
 
 
     _cleanup_profile_locks()
